@@ -1,0 +1,42 @@
+# Stack minimale per FinDetect: Neo4j + MongoDB (replica set a 1 nodo).
+services:
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: findetect_neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASS:?set NEO4J_PASS in .env}"
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "2G"
+      NEO4J_server_memory_pagecache_size: "1G"
+    volumes:
+      - ./.neo4j_data:/data
+
+  mongo:
+    image: mongo:7
+    container_name: findetect_mongo
+    # avvio in replica set mode (senza auto-init, l'init lo fa mongo-init)
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./.mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # init replica set una volta che mongo è pronto
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    volumes:
+      - ./mongo-init:/init:ro
+    command: ["mongosh", "--host", "mongo:27017", "/init/init-replica.js"]

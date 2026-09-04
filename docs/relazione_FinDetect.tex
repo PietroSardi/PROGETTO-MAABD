@@ -1,0 +1,675 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\geometry{margin=2.6cm}
+
+% stile per i blocchi di codice
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{210,210,210}
+
+\lstdefinestyle{plain}{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\footnotesize,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  xleftmargin=14pt,
+  xrightmargin=6pt,
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  upquote=true
+}
+\lstdefinestyle{py}{
+  style=plain,
+  language=Python,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{green!45!black},
+  stringstyle=\color{red!55!black}
+}
+\lstset{style=plain}
+
+\title{\vspace{-1.5cm}\textbf{PROGETTO MAADB --- LAB 2025/2026}\\[0.3cm]
+\large FinDetect: polyglot persistence Neo4j + MongoDB\\ sul benchmark LDBC FinBench}
+\author{Pietro Sardi (matr. 989803) \quad Pietro Longo (matr. 1062127)\\[0.2cm]
+\normalsize Universit\`a degli Studi di Torino}
+\date{A.A. 2025--2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent FinDetect \`e un prototipo di applicazione web per l'interrogazione e
+l'analisi del dataset finanziario \emph{LDBC FinBench}. Gli stessi dati sono
+caricati su due basi di dati non relazionali --- un database a grafo (Neo4j) e
+un database a documenti (MongoDB) --- per sfruttare ciascun motore dove rende di
+pi\`u: il grafo per le interrogazioni sui cammini fra conti, il documento per le
+schede anagrafiche aggregate. L'app espone sei query parametriche (lookup e
+analitiche, alcune cross-database) tramite un'interfaccia Flask. La relazione
+discute le scelte progettuali, le collega ai concetti del corso e analizza in
+modo critico i tempi di esecuzione misurati sui dati reali.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ===================================================================
+\section{Introduzione}
+% ===================================================================
+
+Il problema che affrontiamo \`e l'analisi di dati finanziari per scopi di
+\emph{antifrode}: dato un grande insieme di conti, persone, aziende e
+transazioni, vogliamo rispondere a domande sia puntuali (``mostrami il profilo
+di questa persona'') sia analitiche (``trova i conti che fanno da snodo a
+tantissime transazioni'', ``trova i giri di denaro che tornano al mittente'').
+
+Il dato di partenza \`e il benchmark \textbf{LDBC FinBench}, uno standard pensato
+proprio per stressare i sistemi di gestione dati su carichi di lavoro di tipo
+finanziario. La traccia del progetto chiede di caricare gli stessi dati su due
+sistemi non relazionali e di costruire una web-app che permetta query
+parametriche di tipo \emph{lookup} e query \emph{analitiche}, di cui almeno una
+per categoria deve essere cross-database.
+
+La scelta di non usare un singolo database relazionale nasce da
+un'osservazione che \`e anche al centro del programma del corso: il modello
+relazionale \`e ottimo quando i dati sono ``piatti e omogenei'', ma diventa
+scomodo quando l'informazione interessante sta nelle \emph{relazioni fra le
+entit\`a} (cfr. appunti del corso, cap. 1.2 e 1.4). Trovare un ciclo di
+pagamenti $A\to B\to C\to A$ in SQL richiederebbe pi\`u self-join annidati e
+costosi; su un grafo \`e una singola interrogazione di
+\emph{raggiungibilit\`a}. Da qui la scelta della \emph{polyglot persistence}:
+usare due tecnologie diverse, ognuna nel suo dominio di forza.
+
+\paragraph{Cosa fa l'applicazione.} L'utente sceglie una delle sei query da
+un men\`u, imposta i parametri (con la possibilit\`a di pescarne di realistici a
+caso dal dataset) e ottiene una tabella di risultati con il numero di righe e il
+tempo di esecuzione. Il prototipo \`e volutamente minimale, come richiesto dalla
+traccia: l'obiettivo non \`e un prodotto, ma una dimostrazione funzionante delle
+scelte di modellazione.
+
+% ===================================================================
+\section{Accenni teorici}
+% ===================================================================
+
+Questa sezione richiama i concetti che useremo per giustificare le scelte. Ogni
+nozione \`e spiegata in modo intuitivo e, dove possibile, collegata agli appunti
+del corso.
+
+\subsection{Modello a grafo e modello a documenti}
+
+Un \textbf{database a grafo} rappresenta i dati come nodi (le entit\`a) e archi
+(le relazioni), entrambi dotati di propriet\`a. A differenza del vecchio modello
+reticolare, qui il grafo non \`e imposto ovunque ma \emph{scelto dove la natura
+dei dati \`e gi\`a relazionale} (cfr. appunti, cap. 1.4, ``Basi di dati a
+grafo''). La forza del modello \`e che abilita le \textbf{query di
+raggiungibilit\`a}, cio\`e interrogazioni che chiedono se e come due nodi sono
+collegati da un cammino, che nel relazionale ``restano impossibili'' o molto
+costose. \`E esattamente il caso dei nostri cicli di transazioni (Q4) e della
+ricerca degli snodi (Q6).
+
+Un \textbf{database a documenti} memorizza invece oggetti autodescrittivi (in
+MongoDB, documenti BSON simili a JSON). Si rinuncia alla rigidit\`a dello schema
+relazionale in cambio di flessibilit\`a: un documento pu\`o contenere
+direttamente le sue sotto-strutture annidate. Questo \`e ideale per la
+\emph{scheda di una persona}, dove vogliamo anagrafica, conti e prestiti gi\`a
+raccolti insieme senza dover ricomporre tutto con dei join (Q2).
+
+\paragraph{Perch\'e due database e non uno.} La \emph{polyglot persistence}
+\`e la pratica di usare pi\`u tecnologie di memorizzazione nello stesso sistema,
+ciascuna per il tipo di accesso a cui \`e pi\`u adatta. Il costo \`e la
+\textbf{ridondanza controllata}: alcune informazioni (es. i transfer) vivono sia
+come archi in Neo4j sia come documenti in MongoDB. Lo accettiamo
+consapevolmente perch\'e i due motori servono interrogazioni diverse: il grafo
+per i cammini, il documento per le aggregazioni anagrafiche. \`E un classico
+esempio di scelta di ingegneria che baratta un po' di spazio e di coerenza in
+cambio di prestazioni mirate.
+
+\paragraph{Perch\'e proprio Neo4j e MongoDB.} Fra i database a grafo abbiamo
+scelto \textbf{Neo4j} perch\'e \`e il pi\`u maturo e diffuso, ha un'edizione
+Community gratuita e usa \emph{Cypher}, un linguaggio dichiarativo molto
+leggibile (un pattern come $A\to B\to C\to A$ si scrive quasi come si
+disegnerebbe su carta). Alternative come ArangoDB o Amazon Neptune sarebbero
+state valide ma meno immediate da installare e usare in locale. Fra i document
+store abbiamo scelto \textbf{MongoDB} per la stessa ragione di diffusione, per
+la potenza della \emph{aggregation pipeline} e per la semplicit\`a con cui si
+configura un replica set; un'alternativa come PostgreSQL con campi JSONB sarebbe
+stata di fatto un ritorno al relazionale, fuori dallo spirito ``due sistemi non
+relazionali'' richiesto dalla traccia.
+
+\subsection{Centralit\`a di grado per la \emph{hub detection}}
+
+La query Q6 cerca gli ``snodi'' della rete, cio\`e i conti che partecipano a un
+numero anomalo di transazioni. La misura naturale \`e la \textbf{centralit\`a di
+grado} (\emph{degree centrality}): il grado di un nodo \`e il numero di archi che
+lo toccano. Considerando le transazioni entranti e uscenti separatamente:
+%
+\begin{equation}
+\deg(v) \;=\; \deg_{\text{in}}(v) + \deg_{\text{out}}(v)
+\;=\; \bigl|\{\,e \in E : e = (u,v)\,\}\bigr| + \bigl|\{\,e \in E : e = (v,w)\,\}\bigr|
+\label{eq:degree}
+\end{equation}
+%
+dove $E$ \`e l'insieme degli archi \texttt{TRANSFER}. Un conto con
+$\deg(v)$ molto alto \`e un candidato hub: nello scenario antifrode \`e un punto
+che merita attenzione. Q6 calcola questo grado \emph{dentro una finestra
+temporale} e offre due criteri per decidere chi \`e hub:
+\begin{itemize}[nosep]
+  \item \textbf{soglia assoluta} (parametro \texttt{minDegree}, il default):
+  tiene i conti con $\deg(v) \ge$ soglia. \`E il criterio \emph{operativo},
+  pi\`u vicino al caso d'uso antifrode/vigilanza dichiarato da LDBC FinBench: si
+  vuole segnalare chi supera una certa attivit\`a indipendentemente dal resto
+  del sistema;
+  \item \textbf{top $x\%$} (parametro opzionale \texttt{topPct}): tiene la
+  frazione pi\`u attiva della distribuzione. \`E un criterio \emph{relativo},
+  adatto ad esplorare come sono distribuiti i gradi; per calcolarlo serve
+  per\`o l'intera classifica dei conti attivi, quindi costa un po' di pi\`u.
+\end{itemize}
+In entrambi i casi la query riporta, oltre ai primi 20 hub, quanti conti
+soddisfano il criterio e il grado minimo fra loro: cos\`i i due approcci si
+confrontano direttamente (ad esempio, a SF~1 sul triennio 2020--2022 il top
+$1\%$ corrisponde a circa 2.600 conti con grado $\ge 72$, mentre la soglia 500
+ne isola poche decine).
+
+\subsection{Selettivit\`a e costo delle query}
+
+Per ragionare sui tempi di esecuzione useremo il concetto di
+\textbf{selettivit\`a} di una condizione, definito negli appunti (cap. 5,
+ottimizzazione delle query) come il rapporto fra la cardinalit\`a del risultato e
+quella dell'input:
+%
+\begin{equation}
+\text{sel}(P) \;=\; \frac{|\sigma_P(R)|}{|R|} \in [0,1]
+\label{eq:sel}
+\end{equation}
+%
+Un valore basso significa alta selettivit\`a (il filtro lascia passare poche
+tuple). Le nostre query di lookup sono molto selettive (filtrano su un singolo
+\texttt{id} indicizzato) e infatti costano pochi millisecondi; le analitiche a
+grafo come Q4 e Q6 sono poco selettive (devono esplorare molti archi) e questo
+si rifletter\`a nei tempi misurati (Sezione~\ref{sec:risultati}).
+
+\subsection{Aspetti distribuiti: replica, consistenza, partizionamento}
+\label{sec:distr}
+
+La traccia chiede di collegare il progetto, dove pertinente, ai concetti di
+sistema distribuito (replica, partizionamento/sharding, consistenza, batch e
+stream processing). \`E corretto premettere che il programma del corso, e i
+relativi appunti, trattano questi temi nel contesto del DBMS \emph{centralizzato}
+(propriet\`a ACID, controllo di concorrenza, recovery): la nozione di
+``consistenza'' degli appunti \`e quella transazionale ACID (cap. 6), non la
+consistenza distribuita. Per gli aspetti distribuiti veri e propri ci appoggiamo
+quindi alla documentazione ufficiale dei sistemi usati, collegandoli a come il
+prototipo \`e effettivamente configurato.
+
+\paragraph{Replica (MongoDB replica set).} Nel nostro
+\texttt{docker-compose.yml} MongoDB \`e avviato in modalit\`a \emph{replica set}
+(\texttt{-{}-replSet rs0}), con uno script di inizializzazione che chiama
+\texttt{rs.initiate()}. Un replica set \`e un gruppo di nodi che mantengono la
+stessa copia dei dati con architettura \emph{primary-secondary}: le scritture
+vanno al primario e vengono propagate ai secondari tramite un log delle
+operazioni (\emph{oplog}). Nel prototipo il set ha un solo nodo --- sufficiente
+in laboratorio --- ma l'architettura \`e quella replicata. \textbf{Perch\'e
+averlo, anche con un nodo?} Perch\'e MongoDB abilita le transazioni
+multi-documento (con le loro garanzie ACID) \emph{solo} sopra un replica set: il
+set \`e quindi un prerequisito architetturale, non un dettaglio.
+
+\paragraph{Consistenza.} Sopra un replica set MongoDB offre una consistenza
+\emph{regolabile} tramite \texttt{write concern} (quanti nodi devono confermare
+una scrittura) e \texttt{read concern} (quanto recente deve essere la lettura).
+Con un solo nodo la lettura \`e di fatto fortemente consistente; in un set a pi\`u
+nodi si potrebbe scegliere fra letture pi\`u veloci ma potenzialmente
+indietro nel tempo (dai secondari) e letture pi\`u sicure (dal primario). \`E il
+tipico compromesso fra latenza e consistenza dei sistemi distribuiti, assente
+nel modello puramente centralizzato del corso.
+
+\paragraph{Partizionamento/sharding.} Non lo abbiamo usato: alla scala del
+nostro dataset (\emph{scale factor} 1, descritto sotto) i dati stanno
+comodamente su un singolo nodo, e introdurre lo sharding sarebbe stato
+\textbf{over-engineering}. Lo sharding diventa necessario quando i dati non
+entrano pi\`u su una macchina: MongoDB partiziona orizzontalmente le collezioni
+in base a una \emph{shard key}, Neo4j Community (quello che usiamo) non supporta
+il clustering. Lo citiamo come scelta consapevolmente scartata per la scala in
+gioco.
+
+\paragraph{Batch vs stream processing.} Il dataset \`e prodotto in
+\textbf{batch}: il datagen ufficiale LDBC gira su \emph{Apache Spark}, il motore
+di elaborazione distribuita per eccellenza, e genera i CSV in una sola passata.
+Anche il nostro ETL \`e batch (caricamento massivo dei CSV nei due database). Non
+usiamo \emph{stream processing} perch\'e i dati sono statici, generati una volta
+sola; un sistema antifrode reale, che deve reagire alle transazioni mentre
+accadono, userebbe invece un motore a flussi (es. Kafka + Spark Streaming) con
+elaborazione a finestre temporali. Lo segnaliamo come naturale estensione.
+
+% ===================================================================
+\section{Dataset e preprocessing}
+% ===================================================================
+
+\subsection{Il modello dei dati FinBench}
+
+Il dataset descrive un piccolo mondo finanziario fatto di poche entit\`a e di una
+fitta rete di relazioni fra loro. Le entit\`a (i nodi in Neo4j, le collezioni in
+MongoDB) sono:
+\begin{itemize}[nosep]
+  \item \textbf{Person} e \textbf{Company}: i titolari, persone fisiche e aziende;
+  \item \textbf{Account}: i conti, ciascuno con un tipo (es. \emph{retirement
+  account}, \emph{credit card}) e un intestatario;
+  \item \textbf{Loan}: i prestiti, con importo, saldo e finalit\`a;
+  \item \textbf{Medium}: gli strumenti di pagamento usati nelle operazioni.
+\end{itemize}
+Il cuore del dataset sono per\`o le \emph{relazioni}: una persona \emph{possiede}
+conti (\texttt{personOwnAccount}) e \emph{richiede} prestiti
+(\texttt{personApplyLoan}); soprattutto, i conti si scambiano denaro con i
+\texttt{TRANSFER} --- il tipo di arco pi\`u importante per noi, oltre 1,3 milioni
+di istanze --- e fanno operazioni di \texttt{DEPOSIT}, \texttt{WITHDRAW} e
+\texttt{REPAY}. \`E proprio questa rete di transazioni fra conti a rendere
+naturale il modello a grafo: le nostre query analitiche (cicli, hub) sono
+domande \emph{sulla forma della rete}, non sui singoli record.
+
+\subsection{LDBC FinBench e lo \emph{scale factor}}
+
+Il dataset \`e generato dal datagen ufficiale LDBC FinBench (tag
+\texttt{v0.1.0}) con \emph{scale factor} (SF) pari a 1. Lo scale factor \`e il
+``rubinetto'' che regola la dimensione dei dati generati: SF~1 produce un dataset
+abbastanza grande da essere interessante (milioni di archi) ma abbastanza piccolo
+da girare su un portatile.
+
+\paragraph{Perch\'e SF~1 e non di pi\`u.} La generazione \`e l'operazione pi\`u
+pesante dell'intero progetto, perch\'e Spark deve simulare l'attivit\`a
+finanziaria. Su un portatile Apple Silicon la generazione di SF~1 ha richiesto
+circa 7--8 minuti, limitando la memoria a 8~GB. SF pi\`u alti (10, 100) avrebbero
+moltiplicato i tempi e lo spazio senza aggiungere nulla alla dimostrazione delle
+scelte di modellazione, che \`e l'obiettivo del progetto. \`E la stessa logica
+con cui in un esperimento si sceglie un campione rappresentativo invece
+dell'intera popolazione.
+
+\subsection{Volumi caricati (dati reali)}
+
+La Tabella~\ref{tab:neo4j} e la Tabella~\ref{tab:mongo} riportano i conteggi
+\emph{effettivamente misurati} sui due database dopo l'ETL. In Neo4j il dataset
+\`e fatto di \textbf{643.241 nodi} e \textbf{5.372.701 archi}.
+
+\begin{table}[h]
+\centering
+\begin{minipage}{0.48\textwidth}
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Nodo (label)} & \textbf{Conteggio} \\
+\midrule
+Account & 264.075 \\
+Loan    & 159.166 \\
+Medium  & 100.000 \\
+Person  & 80.000 \\
+Company & 40.000 \\
+\midrule
+\textbf{Totale nodi} & \textbf{643.241} \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Arco (tipo)} & \textbf{Conteggio} \\
+\midrule
+WITHDRAW  & 2.011.359 \\
+TRANSFER  & 1.379.527 \\
+DEPOSIT   & 512.680 \\
+SIGNIN    & 451.362 \\
+OWN       & 264.075 \\
+REPAY     & 262.571 \\
+INVEST    & 260.156 \\
+APPLY     & 159.166 \\
+GUARANTEE & 71.805 \\
+\midrule
+\textbf{Totale archi} & \textbf{5.372.701} \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\caption{Volumi in Neo4j: nodi per label e archi per tipo.}
+\label{tab:neo4j}
+\end{table}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr lr}
+\toprule
+\textbf{Collezione} & \textbf{Documenti} & \textbf{Collezione} & \textbf{Documenti} \\
+\midrule
+account          & 264.075   & person            & 80.000 \\
+transfer         & 1.379.527 & company           & 40.000 \\
+loan             & 159.166   & personOwnAccount  & 175.956 \\
+medium           & 100.000   & companyOwnAccount & 88.119 \\
+personApplyLoan  & 106.346   &                   &        \\
+\bottomrule
+\end{tabular}
+\caption{Volumi in MongoDB (database \texttt{findetect}): documenti per collezione.}
+\label{tab:mongo}
+\end{table}
+
+Si noti la coerenza fra i due database: i 264.075 conti sono sia nodi
+\texttt{Account} sia documenti \texttt{account}, e gli 1.379.527 transfer sono
+sia archi \texttt{TRANSFER} sia documenti \texttt{transfer}. Anche le due
+collezioni-link \texttt{personOwnAccount} e \texttt{companyOwnAccount} sommano
+esattamente a 264.075: in FinBench ogni conto ha un solo intestatario, persona
+\emph{o} azienda, ed \`e per questo che le query cross-database (Q3, Q6)
+interrogano entrambe. \`E la ridondanza
+controllata di cui sopra: la stessa entit\`a vive nei due mondi con la forma pi\`u
+comoda per ciascuno.
+
+\subsection{ETL: dal CSV ai due database}
+
+Il caricamento \`e gestito da due script Python (\texttt{etl/load\_neo4j.py} e
+\texttt{etl/load\_mongo.py}) che leggono i CSV grezzi prodotti dal datagen e li
+inseriscono nei rispettivi database. Le scelte principali:
+
+\begin{itemize}[nosep]
+  \item \textbf{Caricamento a blocchi (batch).} Gli inserimenti sono raggruppati
+  in lotti invece di una riga alla volta: scrivere milioni di record uno per uno
+  sarebbe lentissimo per via del costo fisso di ogni operazione di I/O.
+  \item \textbf{Indici prima dei dati.} In Neo4j creiamo un indice su
+  \texttt{Account.id} prima di caricare gli archi, cos\`i la ricerca dei nodi a
+  cui agganciare ogni \texttt{TRANSFER} non degenera in una scansione completa.
+  In MongoDB l'indice su \texttt{\_id} \`e automatico.
+  \item \textbf{Le date come interi.} I timestamp sono salvati come millisecondi
+  dall'epoch (interi), pi\`u compatti e veloci da confrontare delle stringhe.
+\end{itemize}
+
+% ===================================================================
+\section{Architettura del sistema}
+% ===================================================================
+
+\subsection{Struttura del codice}
+
+Il progetto \`e organizzato in moduli piccoli e con un compito chiaro:
+
+\begin{itemize}[nosep]
+  \item \texttt{docker-compose.yml} --- avvia Neo4j e MongoDB in container;
+  \item \texttt{datagen/run\_datagen.sh} --- clona, compila e lancia il datagen Spark;
+  \item \texttt{etl/} --- gli script di caricamento CSV verso i due database;
+  \item \texttt{app/db/} --- due moduli (\texttt{mongo.py}, \texttt{neo4j.py})
+  che incapsulano la connessione: il resto del codice chiede una connessione e
+  non sa nulla di come viene creata;
+  \item \texttt{app/queries/} --- un file per ognuna delle sei query, pi\`u un
+  modulo \texttt{\_common.py} con le funzioni condivise (conversione date,
+  misura dei tempi);
+  \item \texttt{app/app.py} --- l'applicazione Flask con le rotte.
+\end{itemize}
+
+\paragraph{Perch\'e separare connessione e query.} Ogni modulo in
+\texttt{app/db/} espone una sola funzione (\texttt{get\_driver()},
+\texttt{get\_db()}) che restituisce una connessione riusabile. \`E una forma
+leggera di \emph{repository pattern}: se domani cambiassimo le credenziali o
+spostassimo un database, toccheremmo un solo file invece di tutte le query.
+
+\subsection{Le sei query e la loro classificazione}
+
+La traccia chiede almeno due query di lookup (di cui una cross-database) e almeno
+due analitiche (di cui una cross-database). La Tabella~\ref{tab:query-class}
+mostra come le nostre sei query coprono e superano il requisito.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{ID} & \textbf{Tipo} & \textbf{Database} & \textbf{Descrizione} \\
+\midrule
+Q1 & lookup    & Neo4j     & Transfer uscenti da un conto in una finestra temporale \\
+Q2 & lookup    & MongoDB   & Profilo completo di una persona (anagrafica + conti + prestiti) \\
+Q3 & lookup    & Cross-DB  & Scheda conto + intestatario (Mongo), top-10 vicini (Neo4j) \\
+Q4 & analitica & Neo4j     & Cicli di transfer $A\to B\to C\to A$ sopra soglia \\
+Q5 & analitica & MongoDB   & Top-10 conti per volume trasferito in un mese \\
+Q6 & analitica & Cross-DB  & Hub per grado, soglia o top-$x\%$ (Neo4j) + intestatario (Mongo) \\
+\bottomrule
+\end{tabular}
+\caption{Le sei query: tre di lookup e tre analitiche, due delle quali cross-database.}
+\label{tab:query-class}
+\end{table}
+
+\paragraph{Esempio di query a grafo (Q4, cicli).} La forza del modello a grafo
+si vede nella query dei cicli: un pattern che in SQL sarebbe un incubo di
+self-join, in Cypher \`e una sola riga di \emph{pattern matching}.
+
+\begin{lstlisting}[style=plain,caption={Q4 -- ricerca di cicli a tre passi in Cypher.},captionpos=b]
+MATCH (a:Account)-[t1:TRANSFER]->(b:Account)
+      -[t2:TRANSFER]->(c:Account)-[t3:TRANSFER]->(a)
+WHERE t1.amount >= $minAmount AND t2.amount >= $minAmount
+  AND t3.amount >= $minAmount
+  AND t1.timestamp < t2.timestamp
+  AND t2.timestamp < t3.timestamp
+  AND t3.timestamp - t1.timestamp <= $windowMs
+RETURN a.id, b.id, c.id, t1.amount, t2.amount, t3.amount
+LIMIT 50
+\end{lstlisting}
+
+\paragraph{Esempio di query cross-database (Q6).} Q6 fa lavorare i due motori in
+sequenza: prima Neo4j trova gli hub (i conti con grado alto, formula
+\ref{eq:degree}), poi MongoDB arricchisce ciascun hub con tipo di conto, data
+di apertura e profilo dell'intestatario (persona o azienda). \`E il pattern
+``il grafo trova \emph{chi}, il documento dice \emph{cosa}''.
+
+\begin{lstlisting}[style=py,caption={Q6 -- la parte di orchestrazione cross-database (Python).},captionpos=b]
+# 1) Neo4j: trova gli hub per grado dentro la finestra
+#    (CYPHER_THRESHOLD se si usa la soglia, CYPHER_TOP_PCT se si usa il top x%)
+hubs = session.run(CYPHER_THRESHOLD, startMs=..., endMs=..., minDegree=...).data()
+ids  = [h["accountId"] for h in hubs]
+
+# 2) MongoDB: metadati del conto + intestatario, con una find($in) per collezione
+meta   = {d["_id"]: d for d in db.account.find({"_id": {"$in": ids}})}
+owners = owners_of(ids)   # legge personOwnAccount e companyOwnAccount
+\end{lstlisting}
+
+L'helper \texttt{owners\_of} (in \texttt{app/queries/\_common.py}) \`e condiviso
+con Q3: risolve l'intestatario passando dalle due collezioni-link
+(\texttt{personOwnAccount}, \texttt{companyOwnAccount}) alle rispettive
+anagrafiche, sempre con query \texttt{\$in} in blocco e mai una query per conto.
+
+\paragraph{Esempio di aggregazione (Q5, MongoDB).} Dove Neo4j usa il pattern
+matching, MongoDB usa la \emph{aggregation pipeline}: una sequenza di stadi che
+trasformano i documenti a catena. Q5 trova i dieci conti con pi\`u volume
+trasferito in un mese.
+
+\begin{lstlisting}[style=py,caption={Q5 -- aggregation pipeline di MongoDB.},captionpos=b]
+pipeline = [
+    {"$match":  {"timestamp": {"$gte": start_ms, "$lt": end_ms}}},
+    {"$group":  {"_id": "$accountSrc",
+                 "totalAmount":  {"$sum": "$amount"},
+                 "numTransfers": {"$sum": 1}}},
+    {"$sort":   {"totalAmount": -1}},
+    {"$limit":  10},
+    {"$lookup": {"from": "account", "localField": "_id",
+                 "foreignField": "_id", "as": "account"}},
+]
+\end{lstlisting}
+
+Si legge come una catena di trasformazioni: \texttt{\$match} filtra il mese
+(lo stadio selettivo che rende la query veloce), \texttt{\$group} somma gli
+importi per conto, \texttt{\$sort} e \texttt{\$limit} tengono i primi dieci,
+\texttt{\$lookup} aggancia i metadati del conto. \`E l'equivalente
+document-oriented di un \texttt{GROUP BY} con join. Avere i due paradigmi a
+confronto --- pattern matching dichiarativo su grafo e pipeline procedurale su
+documenti --- \`e uno dei punti pi\`u istruttivi del progetto.
+
+\subsection{Interfaccia web}
+
+L'interfaccia (Flask + Tailwind) presenta le sei query come schede selezionabili;
+per ogni query mostra un form con i parametri. Una funzione di comodo
+(\texttt{/api/random}) pesca valori \emph{realmente presenti} nel dataset, cos\`i
+chi prova l'app non deve conoscere a memoria gli identificativi dei conti (che
+sono interi a 19 cifre). Questa scelta nasce da un problema concreto di
+usabilit\`a: senza, l'utente non saprebbe cosa scrivere nei campi e otterrebbe
+sempre zero risultati.
+
+% ===================================================================
+\section{Risultati e analisi critica}
+\label{sec:risultati}
+% ===================================================================
+
+Abbiamo misurato ogni query eseguendola cinque volte di fila con parametri di
+default realistici. La Tabella~\ref{tab:perf} riporta il numero di righe
+restituite e il tempo \emph{a regime} (la mediana delle esecuzioni), insieme al
+tempo della \emph{prima} esecuzione, sempre pi\`u alto.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllrrr}
+\toprule
+\textbf{ID} & \textbf{Tipo} & \textbf{DB} & \textbf{Righe} & \textbf{A regime (ms)} & \textbf{Prima run (ms)} \\
+\midrule
+Q1 & lookup    & Neo4j    & 100 & 10,0   & 169,7 \\
+Q2 & lookup    & MongoDB  & 1   & 0,5    & 63,9 \\
+Q3 & lookup    & Cross-DB & 1$^{*}$ & 6,2 & 67,4 \\
+Q4 & analitica & Neo4j    & 50  & 660,8  & 906,9 \\
+Q5 & analitica & MongoDB  & 10  & 1,0    & 35,9 \\
+Q6 & analitica & Cross-DB & 20  & 1289,6 & 1915,1 \\
+\bottomrule
+\end{tabular}
+\caption{Prestazioni misurate (5 esecuzioni). $^{*}$Q3 restituisce un documento
+che contiene a sua volta i 10 conti vicini.}
+\label{tab:perf}
+\end{table}
+
+I numeri raccontano una storia molto netta e coerente con la teoria della
+Sezione~2.
+
+\paragraph{Q1 --- Transfer uscenti (lookup, Neo4j).} 100 righe in circa 10~ms.
+La query \`e molto selettiva: parte da un singolo conto (indice su
+\texttt{Account.id}) e segue solo i suoi archi uscenti dentro la finestra. \`E il
+caso ideale per il grafo: navigazione locale a partire da un nodo noto.
+
+\paragraph{Q2 --- Profilo persona (lookup, MongoDB).} Un solo documento in
+mezzo millisecondo, la query pi\`u veloce in assoluto. La persona \`e trovata per
+\texttt{\_id} (indice automatico) e il documento contiene gi\`a, tramite quattro
+\emph{lookup} a catena, i suoi conti e prestiti. \`E la dimostrazione del
+vantaggio del modello a documenti per le schede aggregate.
+
+\paragraph{Q3 --- Scheda conto + vicini (lookup, cross-DB).} Circa 6~ms. Qui i
+due database collaborano: MongoDB d\`a i metadati del conto e dell'intestatario,
+Neo4j i dieci conti pi\`u connessi per numero di transfer. Il costo \`e ancora
+basso perch\'e tutto parte da un singolo conto noto.
+
+\paragraph{Q4 --- Cicli a tre passi (analitica, Neo4j).} Qui il tempo sale a
+circa 660~ms, due ordini di grandezza sopra le lookup. \`E atteso: la ricerca
+del pattern $A\to B\to C\to A$ \`e poco selettiva, perch\'e il motore deve
+esplorare moltissimi cammini di lunghezza tre prima di scoprire quali si chiudono
+in ciclo. \`E il prezzo di un'interrogazione potente che sul relazionale sarebbe
+ancora pi\`u cara.
+
+\paragraph{Q5 --- Top-10 volume mensile (analitica, MongoDB).} Circa 1~ms,
+sorprendentemente veloce per un'analitica. Il motivo \`e che l'aggregazione opera
+su un filtro temporale selettivo (un solo mese) e MongoDB la risolve con la sua
+pipeline nativa. Mostra che ``analitica'' non significa automaticamente ``lenta'':
+conta quanto \`e selettivo il filtro a monte.
+
+\paragraph{Q6 --- Hub detection (analitica, cross-DB).} La query pi\`u pesante,
+circa 1,3~secondi. Deve scorrere \emph{tutti} i transfer dentro la finestra
+temporale, calcolare il grado di ogni conto (formula~\ref{eq:degree}) e tenere
+solo quelli sopra soglia. \`E poco selettiva per costruzione --- guarda l'intera
+rete --- e per questo \`e la pi\`u costosa. La variante top-$x\%$ costa ancora
+un po' di pi\`u (circa 1,5~s a regime con $x=1$): non basta pi\`u tenere i
+primi 20 in un \emph{heap}, bisogna ordinare e materializzare tutta la
+classifica per sapere dove cade il taglio percentuale. Un dettaglio
+implementativo che ha contato: raggruppare per \emph{nodo} e leggere
+\texttt{a.id} solo sui conti sopravvissuti al filtro, invece che su tutti i
+2,7 milioni di estremi di arco, vale circa 0,7~s.
+
+\paragraph{Il costo della ``prima volta''.} In tutte le query la prima
+esecuzione \`e nettamente pi\`u lenta delle successive (per Q2 si passa da 64~ms
+a mezzo millisecondo). \`E l'effetto del \emph{caching}: alla prima esecuzione i
+dati non sono ancora nella memoria centrale dei database e vanno letti da disco;
+dopo, restano nel buffer e le query a regime sono molto pi\`u veloci. \`E la
+\emph{localit\`a temporale} descritta negli appunti (cap. 2, gestione del buffer):
+un dato appena letto ha alta probabilit\`a di essere riletto a breve, quindi
+tenerlo in memoria ammortizza il costo.
+
+\paragraph{Lettura d'insieme.} Le quattro lookup/analitiche selettive (Q1, Q2,
+Q3, Q5) stanno tutte sotto i 10~ms; le due analitiche di grafo poco selettive
+(Q4, Q6) costano centinaia/migliaia di ms. La discriminante non \`e ``grafo
+contro documento'' n\'e ``lookup contro analitica'', ma la \textbf{selettivit\`a}
+(formula~\ref{eq:sel}): pi\`u dati la query \`e costretta a toccare, pi\`u tempo
+impiega. \`E esattamente la lezione del capitolo sull'ottimizzazione.
+
+% ===================================================================
+\section{Limitazioni}
+% ===================================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{Ridondanza e coerenza.} Tenere i transfer in due database
+  significa che un aggiornamento andrebbe propagato a entrambi. Nel prototipo i
+  dati sono in sola lettura, quindi il problema non si pone; in un sistema reale
+  servirebbe un meccanismo di sincronizzazione (es. \emph{change data capture}).
+  \item \textbf{Scala singola.} Tutto gira su un nodo per database. Q6, che
+  scorre l'intera rete, a scale factor molto pi\`u alti diventerebbe proibitiva e
+  richiederebbe sharding o pre-calcolo dei gradi (materializzazione).
+  \item \textbf{Hub detection: due criteri, nessuno ``giusto''.} Q6 offre
+  soglia assoluta e top-$x\%$, ma la scelta della soglia (o della percentuale)
+  resta a carico dell'analista: un criterio pi\`u robusto userebbe statistiche
+  della distribuzione (es. media pi\`u $k$ deviazioni standard, o percentili
+  calcolati per periodo).
+  \item \textbf{Nessuna elaborazione a flusso.} Il sistema lavora su dati
+  statici. Un caso antifrode reale, che deve reagire alle transazioni in tempo
+  reale, richiederebbe stream processing (Sezione~\ref{sec:distr}).
+\end{itemize}
+
+% ===================================================================
+\section{Conclusioni}
+% ===================================================================
+
+FinDetect mostra in pratica perch\'e la polyglot persistence \`e una scelta
+sensata su dati finanziari: le interrogazioni sui cammini (cicli, hub) vivono
+naturalmente nel grafo, le schede aggregate nel documento, e ogni motore lavora
+dove rende di pi\`u. L'analisi dei tempi conferma la teoria del corso: il costo
+di una query \`e governato dalla sua selettivit\`a, non dal tipo di database. Le
+sei query coprono e superano il requisito della traccia (lookup e analitiche,
+con casi cross-database), e l'interfaccia rende il tutto dimostrabile senza
+conoscere a memoria gli identificativi del dataset. I limiti principali ---
+ridondanza, scala singola, assenza di stream --- sono noti e indicano le
+naturali direzioni di sviluppo.
+
+% ===================================================================
+\section{Comandi per l'esecuzione}
+% ===================================================================
+
+\begin{lstlisting}[style=plain,caption={Avvio completo del prototipo.},captionpos=b]
+# 1) database in Docker (Neo4j + MongoDB replica set)
+docker compose up -d
+
+# 2) generazione del dataset SF 1 (una volta sola, ~8 min)
+./datagen/run_datagen.sh
+
+# 3) ambiente Python
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 4) caricamento dati nei due database
+python -m etl.load_mongo
+python -m etl.load_neo4j
+
+# 5) avvio dell'app web -> http://localhost:5050
+python -m app.app
+
+# 6) (opzionale) smoke test: le 6 query coi parametri di default
+python test_smoke.py
+\end{lstlisting}
+
+\end{document}

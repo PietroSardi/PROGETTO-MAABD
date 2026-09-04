@@ -1,0 +1,21 @@
+body { font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+
+.font-serif-display { font-family: 'Playfair Display', Georgia, serif; letter-spacing: -0.005em; }
+.font-mono-pretty   { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+/* badge DB */
+.db-neo4j { background:#EEF2F7; color:#334155; }
+.db-mongo { background:#ECFDF5; color:#065F46; }
+.db-cross { background:#EFF6FF; color:#3E5C76; }
+
+/* card query dello step 1 */
+.q-card.is-active { border-color:#3E5C76; box-shadow:0 0 0 2px rgba(62,92,118,0.18); }
+.q-card:hover     { border-color:#3E5C76; }
+
+/* numerino step 1 / 2 */
+.step-num {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:24px; height:24px; border-radius:4px;
+  background:#3E5C76; color:#fff;
+  font-weight:600; font-size:12px;
+}

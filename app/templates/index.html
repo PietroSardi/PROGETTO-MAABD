@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <title>FinDetect - MAADB</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#F5F4EE] text-stone-800 min-h-screen">
+
+  <header class="border-b border-stone-200/70">
+    <div class="max-w-5xl mx-auto px-8 py-10 flex items-end justify-between">
+      <div>
+        <h1 class="font-serif-display text-5xl text-stone-800">FinDetect</h1>
+        <p class="mt-2 text-stone-500 text-sm">Polyglot persistence · Neo4j + MongoDB · LDBC FinBench SF 1</p>
+      </div>
+      <span class="text-xs text-stone-400">MAADB · 2025/26</span>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-8 py-10">
+
+    <!-- STEP 1 -->
+    <section>
+      <div class="flex items-center gap-3 mb-5">
+        <span class="step-num">1</span>
+        <h2 class="text-xl font-semibold text-stone-800">Scegli una query</h2>
+        <span class="ml-auto text-xs text-stone-400">6 disponibili</span>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for qid, q in queries.items() %}
+          {% set db_class = 'db-cross' if 'Cross' in q.db else ('db-neo4j' if 'Neo4j' in q.db else 'db-mongo') %}
+          <button type="button"
+                  class="q-card text-left bg-white border border-stone-200 rounded-xl p-4 transition-all
+                         {% if loop.first %}is-active{% endif %}"
+                  data-qid="{{ qid }}">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-mono-pretty text-sm font-semibold text-stone-800 tracking-wider">{{ qid|upper }}</span>
+              <span class="text-[10px] font-semibold rounded-full px-2 py-0.5 {{ db_class }}">
+                {{ q.db }}
+              </span>
+            </div>
+            <p class="font-medium text-stone-800 text-sm mb-1">{{ q.short }}</p>
+            <p class="text-xs text-stone-500 leading-relaxed">{{ q.desc }}</p>
+          </button>
+        {% endfor %}
+      </div>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="mt-10">
+      <div class="flex items-center gap-3 mb-5">
+        <span class="step-num">2</span>
+        <h2 class="text-xl font-semibold text-stone-800">Imposta i parametri</h2>
+
+        <div class="ml-auto flex items-center gap-2">
+          <!-- Reset: nascosto di default, compare solo se ci sono modifiche -->
+          <button type="button" id="use-suggested"
+                  class="hidden inline-flex items-center gap-1.5 text-xs font-medium
+                         text-stone-500 hover:text-stone-800 px-2 py-1.5 transition-opacity">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            <span>Reset</span>
+          </button>
+          <button type="button" id="randomize"
+                  class="inline-flex items-center gap-2 text-xs font-medium
+                         bg-white border border-stone-200 hover:border-[#3E5C76]
+                         text-stone-700 hover:text-[#3E5C76]
+                         disabled:opacity-50 disabled:cursor-wait
+                         rounded-full px-3.5 py-1.5 transition-colors">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 3 21 3 21 8"/>
+              <line x1="4" y1="20" x2="21" y2="3"/>
+              <polyline points="21 16 21 21 16 21"/>
+              <line x1="15" y1="15" x2="21" y2="21"/>
+              <line x1="4" y1="4" x2="9" y2="9"/>
+            </svg>
+            <span>Valori casuali</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+
+        {% for qid, q in queries.items() %}
+        <form method="post" action="/query/{{ qid }}"
+              class="query-form {% if not loop.first %}hidden{% endif %}"
+              data-qid="{{ qid }}">
+
+          <!-- testata form -->
+          <div class="bg-stone-50/60 border-b border-stone-200/70 px-8 py-5">
+            <div class="flex items-center gap-3">
+              <span class="font-mono-pretty text-lg font-semibold text-stone-800 tracking-wider">{{ qid|upper }}</span>
+              <div class="flex-1">
+                <p class="font-medium text-stone-800 leading-tight">{{ q.short }}</p>
+                <p class="text-xs text-stone-500 mt-0.5">{{ q.desc }}</p>
+              </div>
+              <span class="text-[10px] font-semibold rounded-full px-2 py-0.5
+                    {% if 'Cross' in q.db %}db-cross
+                    {% elif 'Neo4j' in q.db %}db-neo4j
+                    {% else %}db-mongo{% endif %}">
+                {{ q.db }}
+              </span>
+            </div>
+          </div>
+
+          <!-- campi -->
+          <div class="px-8 py-7 space-y-5">
+            <div class="grid md:grid-cols-2 gap-x-6 gap-y-5">
+              {% for f in q.fields %}
+                <div>
+                  <label class="block text-xs font-medium text-stone-600 mb-2">
+                    {{ f.label }}
+                  </label>
+                  <div class="relative">
+                    <input name="{{ f.name }}" type="{{ f.type }}"
+                           data-default="{{ f.value }}"
+                           value="{{ f.value }}"
+                           {% if f.step %}step="{{ f.step }}"{% endif %}
+                           {% if f.min %}min="{{ f.min }}"{% endif %}
+                           {% if f.max %}max="{{ f.max }}"{% endif %}
+                           class="w-full border border-stone-300 rounded-lg px-4 py-2.5
+                                  font-mono-pretty text-sm
+                                  {% if f.name in randomizable %}pr-11{% endif %}
+                                  focus:outline-none focus:ring-2 focus:ring-[#3E5C76]/30 focus:border-[#3E5C76]">
+                    {% if f.name in randomizable %}
+                      <button type="button" data-random-field="{{ f.name }}"
+                              title="Pesca un valore casuale dal dataset"
+                              aria-label="Valore casuale"
+                              class="absolute right-1.5 top-1/2 -translate-y-1/2
+                                     inline-flex items-center justify-center w-8 h-8 rounded-md
+                                     text-stone-500 hover:text-[#3E5C76] hover:bg-[#EFF6FF]
+                                     transition-colors">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="16 3 21 3 21 8"/>
+                          <line x1="4" y1="20" x2="21" y2="3"/>
+                          <polyline points="21 16 21 21 16 21"/>
+                          <line x1="15" y1="15" x2="21" y2="21"/>
+                          <line x1="4" y1="4" x2="9" y2="9"/>
+                        </svg>
+                      </button>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+
+            <!-- submit -->
+            <div class="pt-3">
+              <button type="submit"
+                      class="submit-btn inline-flex items-center gap-2 bg-[#3E5C76] hover:bg-[#335167]
+                             disabled:bg-stone-300 disabled:cursor-not-allowed
+                             text-white font-medium rounded-lg px-6 py-3 transition-colors">
+                <span class="btn-label">Esegui {{ qid|upper }}</span>
+                <svg class="btn-arrow w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+                <svg class="btn-spinner hidden animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="3"/>
+                  <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="mt-10 text-xs text-stone-400 leading-relaxed">
+      Dataset generato dal datagen ufficiale LDBC FinBench v0.1.0 (SF 1):
+      643k nodi e 5.37M archi in Neo4j, 2.4M documenti in MongoDB.
+    </section>
+  </main>
+
+  <!-- toast per messaggi di errore/feedback -->
+  <div id="toast"
+       class="fixed top-6 right-6 max-w-sm hidden
+              bg-[#EFF6FF] border border-[#3E5C76]/40 text-[#3E5C76]
+              rounded-xl shadow-lg px-4 py-3 text-sm
+              transition-opacity duration-200">
+    <div class="flex items-start gap-2">
+      <svg class="w-4 h-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <span id="toast-msg"></span>
+    </div>
+  </div>
+
+  <script>
+    const cards    = document.querySelectorAll('.q-card');
+    const forms    = document.querySelectorAll('.query-form');
+    const btnReset = document.getElementById('use-suggested');
+    const btnRand  = document.getElementById('randomize');
+    const toast    = document.getElementById('toast');
+    const toastMsg = document.getElementById('toast-msg');
+
+    // --- toast ---
+    let toastTimer = null;
+    function showToast(msg) {
+      toastMsg.textContent = msg;
+      toast.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.add('hidden'), 4000);
+    }
+
+    // --- selezione query ---
+    function activeForm() { return document.querySelector('.query-form:not(.hidden)'); }
+    function selectQuery(qid) {
+      cards.forEach(c => c.classList.toggle('is-active', c.dataset.qid === qid));
+      forms.forEach(f => f.classList.toggle('hidden', f.dataset.qid !== qid));
+      updateResetVisibility();
+    }
+    cards.forEach(c => c.addEventListener('click', () => selectQuery(c.dataset.qid)));
+
+    // --- reset visibile solo se qualche input è stato modificato ---
+    function isDirty(form) {
+      return Array.from(form.querySelectorAll('input[data-default]'))
+                  .some(i => i.value !== i.dataset.default);
+    }
+    function updateResetVisibility() {
+      const f = activeForm();
+      btnReset.classList.toggle('hidden', !f || !isDirty(f));
+    }
+    // qualunque modifica manuale ai campi aggiorna la visibilità
+    document.querySelectorAll('.query-form input').forEach(i => {
+      i.addEventListener('input', updateResetVisibility);
+    });
+    btnReset.addEventListener('click', () => {
+      const f = activeForm(); if (!f) return;
+      f.querySelectorAll('input[data-default]').forEach(i => { i.value = i.dataset.default; });
+      updateResetVisibility();
+    });
+
+    // --- fetch di un pacchetto di valori casuali dal dataset ---
+    async function fetchRandom(qid) {
+      const res = await fetch(`/api/random/${qid}`, { cache: 'no-store' });
+      if (!res.ok) {
+        let msg = 'errore server (' + res.status + ')';
+        try { const err = await res.json(); if (err.error) msg = err.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (!data || Object.keys(data).length === 0) {
+        throw new Error('nessun valore disponibile nel dataset');
+      }
+      return data;
+    }
+
+    // --- bottone "Valori casuali": riempie tutto il form attivo ---
+    btnRand.addEventListener('click', async () => {
+      const f = activeForm(); if (!f) return;
+      btnRand.disabled = true;
+      try {
+        const data = await fetchRandom(f.dataset.qid);
+        for (const [k, v] of Object.entries(data)) {
+          const el = f.querySelector(`input[name="${k}"]`);
+          if (el) el.value = v;
+        }
+        updateResetVisibility();
+      } catch (e) {
+        console.error(e);
+        showToast('Impossibile pescare valori casuali: ' + e.message);
+      } finally {
+        btnRand.disabled = false;
+      }
+    });
+
+    // --- dadino inline per singolo campo ---
+    document.querySelectorAll('[data-random-field]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const f = btn.closest('form');
+        const field = btn.dataset.randomField;
+        btn.disabled = true;
+        try {
+          const data = await fetchRandom(f.dataset.qid);
+          // le date viaggiano sempre in coppia coerente
+          if (field === 'startDate' || field === 'endDate') {
+            if (data.startDate) f.querySelector('[name=startDate]').value = data.startDate;
+            if (data.endDate)   f.querySelector('[name=endDate]').value   = data.endDate;
+          } else if (data[field] !== undefined) {
+            f.querySelector(`[name="${field}"]`).value = data[field];
+          } else {
+            throw new Error('nessun valore per ' + field);
+          }
+          updateResetVisibility();
+        } catch (e) {
+          console.error(e);
+          showToast('Impossibile pescare valori casuali: ' + e.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // --- stato loading sul submit ---
+    forms.forEach(form => {
+      form.addEventListener('submit', () => {
+        const btn = form.querySelector('.submit-btn');
+        if (!btn) return;
+        btn.disabled = true;
+        btn.querySelector('.btn-label').textContent = 'Esecuzione…';
+        btn.querySelector('.btn-arrow').classList.add('hidden');
+        btn.querySelector('.btn-spinner').classList.remove('hidden');
+      });
+    });
+
+    // inizializzo stato al caricamento
+    updateResetVisibility();
+  </script>
+</body>
+</html>

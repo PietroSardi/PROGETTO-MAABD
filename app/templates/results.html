@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <title>FinDetect - Risultati</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#F5F4EE] text-stone-800 min-h-screen">
+
+  {# dizionario: nomi colonna inglese -> etichetta italiana per le tabelle #}
+  {% set col_it = {
+    'dstAccount': 'Conto destinatario',
+    'accountId': 'ID conto',
+    'accountType': 'Tipo conto',
+    'isBlocked': 'Bloccato',
+    'ownerId': 'ID intestatario',
+    'ownerName': 'Nome intestatario',
+    'ownerCountry': 'Paese intestatario',
+    'ownerBlocked': 'Intestatario bloccato',
+    'ownerType': 'Tipo intestatario',
+    'openedAt': 'Data apertura',
+    'nHubs': 'Hub totali',
+    'cutoffDegree': 'Degree min. tra gli hub',
+    'amount': 'Importo',
+    'amt1': 'Importo (1)',
+    'amt2': 'Importo (2)',
+    'amt3': 'Importo (3)',
+    'totalAmount': 'Importo totale',
+    'numTransfers': 'N. transfer',
+    'timestamp': 'Data e ora',
+    'start': 'Inizio ciclo',
+    'end': 'Fine ciclo',
+    'degree': 'Degree',
+    'transfers': 'N. transfer',
+    'neighbor': 'Conto vicino',
+    'account': 'Conto',
+    'owner': 'Intestatario',
+    'neighbors': 'Vicini',
+    'a': 'A', 'b': 'B', 'c': 'C',
+    'type': 'Tipo',
+    'name': 'Nome',
+    'gender': 'Genere',
+    'country': 'Paese',
+    'city': 'Città',
+    'accounts': 'Conti',
+    'loans': 'Prestiti',
+    '_id': 'ID',
+  } %}
+
+  <header class="border-b border-stone-200/70">
+    <div class="max-w-6xl mx-auto px-4 sm:px-8 py-8 flex flex-wrap items-end gap-4 justify-between">
+      <div class="min-w-0 flex-1">
+        <h1 class="font-serif-display text-4xl text-stone-800">Risultati</h1>
+        {% if query %}
+          <p class="mt-2 text-stone-500 text-sm flex flex-wrap items-center gap-2">
+            <span>{{ query.name }}</span>
+            <span class="text-xs
+                   rounded-full px-2 py-0.5 font-medium
+                   {% if 'Cross' in query.db %}db-cross
+                   {% elif 'Neo4j' in query.db %}db-neo4j
+                   {% else %}db-mongo{% endif %}">
+              {{ query.db }}
+            </span>
+          </p>
+        {% endif %}
+      </div>
+
+      <a href="/"
+         class="inline-flex items-center gap-2 bg-white hover:bg-stone-50
+                border border-stone-200 hover:border-[#3E5C76]
+                text-stone-700 hover:text-[#3E5C76]
+                rounded-full pl-3 pr-4 py-2 text-sm font-medium
+                transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.04)] shrink-0">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+        Nuova query
+      </a>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-6">
+
+    {# PARAMETRI — label in italiano #}
+    {% if params %}
+    <section class="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
+      <h2 class="text-xs font-medium text-stone-500 mb-4">Parametri</h2>
+      <dl class="grid sm:grid-cols-2 gap-x-10 gap-y-1 text-sm">
+        {% for k, v in params.items() %}
+          <div class="flex flex-wrap items-baseline justify-between gap-3 border-b border-stone-100 py-2.5">
+            <dt class="text-stone-500">{{ labels.get(k, k) }}</dt>
+            <dd class="font-mono-pretty text-stone-800 text-right break-all">{{ v }}</dd>
+          </div>
+        {% endfor %}
+      </dl>
+    </section>
+    {% endif %}
+
+    {# ERRORE #}
+    {% if error %}
+    <section class="bg-[#EFF6FF] border border-[#3E5C76]/40 text-[#3E5C76] rounded-2xl p-6">
+      <h2 class="font-serif-display text-xl mb-2">Errore</h2>
+      <pre class="text-xs whitespace-pre-wrap font-mono-pretty break-words">{{ error }}</pre>
+    </section>
+    {% endif %}
+
+    {# RISULTATI #}
+    {% if result is not none %}
+    <section class="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
+
+      <div class="flex flex-wrap items-baseline justify-between gap-6 mb-6 pb-5 border-b border-stone-100">
+        <div>
+          <p class="text-xs text-stone-500">Righe</p>
+          <p class="text-3xl font-semibold text-stone-800 mt-1">{{ result.count }}</p>
+        </div>
+        <div class="text-right">
+          <p class="text-xs text-stone-500">Tempo di esecuzione</p>
+          <p class="text-3xl font-semibold text-stone-800 mt-1">
+            {{ result.elapsed_ms }}<span class="text-lg text-stone-400 ml-1">ms</span>
+          </p>
+        </div>
+      </div>
+
+      {% if result.rows and result.rows[0] is mapping %}
+        <div class="overflow-x-auto rounded-lg border border-stone-200 -mx-2 sm:mx-0">
+          <table class="min-w-full text-sm table-auto">
+            <thead class="bg-stone-50 text-stone-500">
+              <tr>
+                {% for k in result.rows[0].keys() %}
+                  <th class="text-left px-4 py-3 font-medium text-xs text-stone-600 whitespace-nowrap">
+                    {{ col_it.get(k, k) }}
+                  </th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-stone-100">
+              {% for row in result.rows %}
+                <tr class="hover:bg-stone-50/60 align-top">
+                  {% for k in result.rows[0].keys() %}
+                    {% set v = row.get(k) %}
+                    {% set is_complex = (v is mapping) or (v is iterable and v is not string) %}
+                    {% set is_longtext = v is string and ' ' in v %}
+                    <td class="px-4 py-3 font-mono-pretty text-xs text-stone-700
+                               {% if is_complex or is_longtext %}whitespace-normal break-words
+                               {% else %}whitespace-nowrap{% endif %}">
+                      {% if is_complex %}
+                        <pre class="whitespace-pre-wrap break-words">{{ v }}</pre>
+                      {% else %}
+                        {{ v }}
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="text-[11px] text-stone-400 mt-2 sm:hidden">Scorri orizzontalmente per vedere tutte le colonne.</p>
+      {% else %}
+        <p class="text-stone-500 text-sm italic">Nessun risultato.</p>
+      {% endif %}
+
+      <details class="mt-5">
+        <summary class="text-sm text-stone-500 cursor-pointer hover:text-stone-700 inline-flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          Mostra JSON grezzo
+        </summary>
+        <pre class="mt-3 bg-stone-800 text-stone-100 rounded-lg p-4 text-xs overflow-auto
+                    font-mono-pretty max-h-[70vh]">{{ rows_json }}</pre>
+      </details>
+    </section>
+    {% endif %}
+
+  </main>
+</body>
+</html>

@@ -1,0 +1,34 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# ide / os
+.vscode/
+.idea/
+.DS_Store
+
+# datagen: il checkout del tool LDBC resta fuori (ri-clonabile, ha un proprio .git);
+# del datagen versioniamo solo il jar compilato, copiato in datagen/
+datagen/_repo/
+datagen/_out/
+
+# --- File di controllo DB: esclusi ANCHE se versioniamo i volumi ---
+# auth.ini contiene l'hash della password Neo4j → sicurezza
+.neo4j_data/dbms/auth.ini
+# .lock = lock runtime, romperebbero il ripristino del database
+.mongo_data/mongod.lock
+.mongo_data/WiredTiger.lock
+
+# volumi DB (2 GB): rigenerabili con docker compose up + ETL dai CSV inclusi
+.neo4j_data/
+.mongo_data/
+# checksum spark, inutili
+*.crc
+_SUCCESS
+
+# non fanno parte della consegna
+CONSEGNA.pdf
+docs/presentazione_outline.md
