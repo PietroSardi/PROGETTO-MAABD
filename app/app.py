@@ -15,6 +15,16 @@ DAY_MS = 24 * 60 * 60 * 1000
 
 # config delle 6 query. i default degli id sono valori "veri" (ho controllato
 # che abbiano dati nel dataset SF 1) così al primo caricamento si vede qualcosa.
+#
+# Tutta la UI è guidata da questo dizionario: index.html itera su QUERIES per
+# disegnare card e form, run_query usa "fields" per sapere cosa leggere dal form
+# e "fn" per sapere cosa eseguire. Aggiungere una query = un file in queries/
+# più una voce qui. Campi di ogni voce:
+#   short/name/desc  testi mostrati nella UI
+#   db               "Neo4j" | "MongoDB" | "Cross-DB" (colore del badge)
+#   fields           input del form: name (chiave in params), label, type html,
+#                    value di default, opzionali step/min/max
+#   fn               funzione run(params) -> {rows, count, elapsed_ms}
 QUERIES = {
     "q1": {
         "short": "Transfer uscenti",
@@ -209,6 +219,8 @@ def api_random(qid):
 
 @app.route("/query/<qid>", methods=["POST"])
 def run_query(qid):
+    # esegue la query <qid> con i valori del form e renderizza results.html.
+    # leggo dal form SOLO i campi dichiarati in "fields": il resto viene ignorato.
     if qid not in QUERIES:
         return render_template("results.html",
                                error="query sconosciuta: " + qid,
@@ -231,6 +243,8 @@ def run_query(qid):
                                query={"id": qid, **q}, params=params, labels=labels,
                                error=str(e), result=None)
 
+    # default=str: nei risultati ci sono ObjectId e interi a 64 bit che il JSON
+    # standard non gestisce; li converto in stringa per il pannello "JSON grezzo"
     rows_json = json.dumps(result["rows"], default=str, indent=2, ensure_ascii=False)
     return render_template("results.html",
                            query={"id": qid, **q}, params=params, labels=labels,

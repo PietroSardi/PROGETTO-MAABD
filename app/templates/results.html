@@ -1,3 +1,13 @@
+{#
+  Pagina dei risultati, unica per tutte le query. Riceve da app.py:
+    query    la voce di QUERIES (nome, db, ...)
+    params   i valori inviati dal form, labels le etichette in italiano
+    result   {rows, count, elapsed_ms} prodotto dal decoratore timed
+    rows_json  le righe serializzate per il pannello "JSON grezzo"
+    error    messaggio se la query è fallita (in quel caso result è None)
+  La tabella è generica: le colonne sono le chiavi della prima riga, tradotte
+  con il dizionario col_it; i valori annidati (Q2, Q3) finiscono in un <pre>.
+#}
 <!doctype html>
 <html lang="it">
 <head>
@@ -127,6 +137,7 @@
         </div>
       </div>
 
+      {# tabella solo se ci sono righe e sono dizionari (lo sono sempre, è una guardia) #}
       {% if result.rows and result.rows[0] is mapping %}
         <div class="overflow-x-auto rounded-lg border border-stone-200 -mx-2 sm:mx-0">
           <table class="min-w-full text-sm table-auto">
@@ -144,6 +155,8 @@
                 <tr class="hover:bg-stone-50/60 align-top">
                   {% for k in result.rows[0].keys() %}
                     {% set v = row.get(k) %}
+                    {# dizionari/liste (es. account, owner, neighbors di Q3) vanno in un
+                       <pre> a capo automatico, gli scalari restano su una riga #}
                     {% set is_complex = (v is mapping) or (v is iterable and v is not string) %}
                     {% set is_longtext = v is string and ' ' in v %}
                     <td class="px-4 py-3 font-mono-pretty text-xs text-stone-700

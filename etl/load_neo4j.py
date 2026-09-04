@@ -79,14 +79,22 @@ def run_batch(session, cypher, csv_name, mapper):
     return n
 
 
-# cypher per i nodi
-Q_PERSON = "UNWIND $rows AS r MERGE (p:Person {id:r.id}) SET p.name=r.name, p.isBlocked=r.isBlocked"
+# cypher per i nodi. Pattern comune: $rows e' una lista di BATCH dizionari
+# passata come parametro, UNWIND la srotola in una riga per elemento -> una
+# sola chiamata di rete e una sola transazione per blocco.
+# MERGE ("trova o crea") per i nodi: idempotente, rilanciare l'ETL non duplica.
+Q_PERSON ="UNWIND $rows AS r MERGE (p:Person {id:r.id}) SET p.name=r.name, p.isBlocked=r.isBlocked"
 Q_COMPANY = "UNWIND $rows AS r MERGE (c:Company {id:r.id}) SET c.name=r.name, c.isBlocked=r.isBlocked"
 Q_ACCOUNT = "UNWIND $rows AS r MERGE (a:Account {id:r.id}) SET a.type=r.type, a.isBlocked=r.isBlocked"
 Q_LOAN = "UNWIND $rows AS r MERGE (l:Loan {id:r.id}) SET l.amount=r.amount, l.balance=r.balance"
 Q_MEDIUM = "UNWIND $rows AS r MERGE (m:Medium {id:r.id}) SET m.name=r.name, m.riskLevel=r.riskLevel"
 
-# cypher per gli archi
+# cypher per gli archi. Prima MATCH dei due estremi (veloce grazie al constraint
+# su id), poi:
+# - CREATE per TRANSFER/WITHDRAW/DEPOSIT/REPAY/SIGNIN: fra la stessa coppia di
+#   nodi ci possono essere MOLTI eventi diversi, ogni riga CSV deve diventare un
+#   arco nuovo (MERGE li fonderebbe in uno e falserebbe conteggi e somme)
+# - MERGE per OWN/APPLY/GUARANTEE/INVEST: relazioni uniche per coppia
 Q_TRANSFER = """
 UNWIND $rows AS r
 MATCH (a:Account {id:r.src}), (b:Account {id:r.dst})
@@ -191,9 +199,16 @@ def main():
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
     with driver.session() as s:
+        # DETACH DELETE cancella nodi e archi collegati; spezzato in transazioni
+        # da 5000 nodi perche' Neo4j tiene lo stato della transazione in heap e
+        # 6M di elementi in una sola andrebbero in out-of-memory
         print("pulisco il DB (chunked, evita OOM)...")
         s.run("MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 5000 ROWS")
 
+        # constraint di unicita' su id = anche indice: i MATCH degli archi
+        # diventano ricerche O(log n) invece di scansioni di 264k nodi. Vanno
+        # creati PRIMA degli archi (5M archi x 2 MATCH senza indice = ingestibile).
+        # L'indice su TRANSFER.timestamp serve ai filtri temporali di Q1 e Q6.
         print("constraint e indici...")
         for lbl in ("Person", "Company", "Account", "Loan", "Medium"):
             s.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:%s) REQUIRE n.id IS UNIQUE" % lbl)

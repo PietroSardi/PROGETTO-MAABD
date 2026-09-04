@@ -4,19 +4,28 @@ from datetime import datetime, timezone
 from app.db.mongo import get_db
 
 
+# Funzioni condivise dalle sei query: conversione date, misura dei tempi,
+# risoluzione dell'intestatario di un conto.
+
+
 def date_to_ms(s):
-    # "YYYY-MM-DD" -> epoch ms UTC
+    # "YYYY-MM-DD" (dal form) -> epoch ms UTC (come sono salvati nei DB).
+    # UTC esplicito: altrimenti Python userebbe il fuso del Mac e i confini
+    # della finestra slitterebbero di un'ora o due.
     return int(datetime.fromisoformat(s).replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def ms_to_iso(ms):
+    # epoch ms -> stringa ISO per la tabella; None resta None
     if ms is None:
         return None
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
 
 def timed(fn):
-    # misura i ms della query e incapsula il risultato
+    # decoratore: misura i ms dell'intera run (per le cross-DB: entrambi i
+    # motori + il Python in mezzo, escluso il rendering HTML) e incapsula il
+    # risultato nella forma {rows, count, elapsed_ms} che il template si aspetta
     def wrap(params):
         t0 = time.perf_counter()
         rows = fn(params)

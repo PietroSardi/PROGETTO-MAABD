@@ -54,8 +54,12 @@ def rows_of(name):
 
 
 def load(db, coll_name, csv_name, mapper):
+    # carica una collezione a blocchi da BATCH documenti: un insert_one per riga
+    # sarebbero 1,4M round-trip per i soli transfer, con insert_many sono 138.
+    # ordered=False: Mongo puo' inserire il blocco in parallelo e non si ferma
+    # al primo errore. Il mapper trasforma la riga CSV nel documento.
     coll = db[coll_name]
-    coll.drop()
+    coll.drop()   # ricarico da zero: rilanciare lo script e' idempotente
     buf = []
     n = 0
     for r in rows_of(csv_name):
@@ -75,7 +79,11 @@ def load(db, coll_name, csv_name, mapper):
     return n
 
 
-# lo schema dei CSV (datagen v0.1.0) usa colonne camelCase e createTime come epoch ms
+# lo schema dei CSV (datagen v0.1.0) usa colonne camelCase e createTime come epoch ms.
+# Uso l'id FinBench come _id del documento: cosi' la ricerca per chiave sfrutta
+# l'indice automatico e Neo4j e Mongo condividono gli stessi identificativi
+# (indispensabile per le query cross-database). I booleani arrivano come
+# stringhe "true"/"false".
 def map_person(r):
     return {
         "_id": int(r["id"]),
@@ -197,7 +205,13 @@ def main():
         csv_name, mapper = COLLECTIONS[name]
         load(db, name, csv_name, mapper)
 
-    # indici (idempotenti: create_index non fa nulla se esistono gia')
+    # indici DOPO il caricamento: mantenere un B-tree aggiornato durante 1,4M di
+    # insert costa, costruirlo alla fine in un colpo e' piu' rapido. (In Neo4j
+    # facciamo il contrario perche' li' il caricamento degli archi fa MATCH sui
+    # nodi e senza indice sarebbe una scansione per ogni arco.)
+    # A cosa servono: transfer.timestamp -> $match di Q5; personOwnAccount.personId
+    # e personApplyLoan.personId -> $lookup di Q2; *.accountId -> intestatario in Q3/Q6.
+    # Idempotenti: create_index non fa nulla se l'indice esiste gia'.
     print("creo indici...")
     db.transfer.create_index([("accountSrc", ASCENDING)])
     db.transfer.create_index([("accountDst", ASCENDING)])

@@ -1,3 +1,13 @@
+{#
+  Home dell'app. Due passi:
+    1) griglia di sei card, una per query (badge colorato per DB)
+    2) un form per query: sono renderizzati tutti ma è visibile solo quello
+       della card attiva (gli altri hanno class="hidden")
+  Tutto è generato iterando su `queries` (il dizionario QUERIES di app.py):
+  card, form, campi e valori di default non sono scritti a mano qui dentro.
+  Il form è un normale POST verso /query/<qid>; il JS in fondo gestisce solo
+  selezione della card, bottone Reset, valori casuali (/api/random) e spinner.
+#}
 <!doctype html>
 <html lang="it">
 <head>
@@ -124,6 +134,8 @@
                     {{ f.label }}
                   </label>
                   <div class="relative">
+                    {# type=number/date: validazione nativa del browser, prima linea di
+                       difesa; la seconda è la conversione dei tipi lato server #}
                     <input name="{{ f.name }}" type="{{ f.type }}"
                            data-default="{{ f.value }}"
                            value="{{ f.value }}"

@@ -1,7 +1,11 @@
+# Connessione a Neo4j via protocollo Bolt (porta 7687). Come per Mongo: un solo
+# driver per processo, creato pigramente; le query aprono una session() e la
+# chiudono subito, il driver riusa le connessioni dal suo pool.
 import os
 
 from neo4j import GraphDatabase
 
+# la password sta in .env (non versionato): la carico se python-dotenv c'e'
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
