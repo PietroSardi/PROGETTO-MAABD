@@ -88,10 +88,9 @@ parametriche di tipo \emph{lookup} e query \emph{analitiche}, di cui almeno una
 per categoria deve essere cross-database.
 
 La scelta di non usare un singolo database relazionale nasce da
-un'osservazione che \`e anche al centro del programma del corso: il modello
-relazionale \`e ottimo quando i dati sono ``piatti e omogenei'', ma diventa
-scomodo quando l'informazione interessante sta nelle \emph{relazioni fra le
-entit\`a} (cfr. appunti del corso, cap. 1.2 e 1.4). Trovare un ciclo di
+un'osservazione semplice: il modello relazionale \`e ottimo quando i dati sono
+``piatti e omogenei'', ma diventa scomodo quando l'informazione interessante
+sta nelle \emph{relazioni fra le entit\`a}. Trovare un ciclo di
 pagamenti $A\to B\to C\to A$ in SQL richiederebbe pi\`u self-join annidati e
 costosi; su un grafo \`e una singola interrogazione di
 \emph{raggiungibilit\`a}. Da qui la scelta della \emph{polyglot persistence}:
@@ -109,20 +108,19 @@ scelte di modellazione.
 % ===================================================================
 
 Questa sezione richiama i concetti che useremo per giustificare le scelte. Ogni
-nozione \`e spiegata in modo intuitivo e, dove possibile, collegata agli appunti
-del corso.
+nozione \`e spiegata in modo intuitivo e collegata a come \`e stata usata nel
+progetto.
 
 \subsection{Modello a grafo e modello a documenti}
 
 Un \textbf{database a grafo} rappresenta i dati come nodi (le entit\`a) e archi
-(le relazioni), entrambi dotati di propriet\`a. A differenza del vecchio modello
-reticolare, qui il grafo non \`e imposto ovunque ma \emph{scelto dove la natura
-dei dati \`e gi\`a relazionale} (cfr. appunti, cap. 1.4, ``Basi di dati a
-grafo''). La forza del modello \`e che abilita le \textbf{query di
-raggiungibilit\`a}, cio\`e interrogazioni che chiedono se e come due nodi sono
-collegati da un cammino, che nel relazionale ``restano impossibili'' o molto
-costose. \`E esattamente il caso dei nostri cicli di transazioni (Q4) e della
-ricerca degli snodi (Q6).
+(le relazioni), entrambi dotati di propriet\`a. Ha senso sceglierlo dove la
+natura dei dati \`e gi\`a una rete di relazioni, come nel nostro caso. La forza
+del modello \`e che abilita le \textbf{query di raggiungibilit\`a}, cio\`e
+interrogazioni che chiedono se e come due nodi sono collegati da un cammino,
+che nel relazionale sono molto costose da esprimere e da eseguire. \`E
+esattamente il caso dei nostri cicli di transazioni (Q4) e della ricerca degli
+snodi (Q6).
 
 Un \textbf{database a documenti} memorizza invece oggetti autodescrittivi (in
 MongoDB, documenti BSON simili a JSON). Si rinuncia alla rigidit\`a dello schema
@@ -157,22 +155,15 @@ relazionali'' richiesto dalla traccia.
 
 La query Q6 cerca gli ``snodi'' della rete, cio\`e i conti che partecipano a un
 numero anomalo di transazioni. La misura naturale \`e la \textbf{centralit\`a di
-grado} (\emph{degree centrality}): il grado di un nodo \`e il numero di archi che
-lo toccano. Considerando le transazioni entranti e uscenti separatamente:
-%
-\begin{equation}
-\deg(v) \;=\; \deg_{\text{in}}(v) + \deg_{\text{out}}(v)
-\;=\; \bigl|\{\,e \in E : e = (u,v)\,\}\bigr| + \bigl|\{\,e \in E : e = (v,w)\,\}\bigr|
-\label{eq:degree}
-\end{equation}
-%
-dove $E$ \`e l'insieme degli archi \texttt{TRANSFER}. Un conto con
-$\deg(v)$ molto alto \`e un candidato hub: nello scenario antifrode \`e un punto
-che merita attenzione. Q6 calcola questo grado \emph{dentro una finestra
-temporale} e offre due criteri per decidere chi \`e hub:
+grado} (\emph{degree centrality}): il grado di un nodo \`e il numero di archi
+\texttt{TRANSFER} che lo toccano, contando sia le transazioni entranti sia
+quelle uscenti. Un conto con grado molto alto \`e un candidato hub: nello
+scenario antifrode \`e un punto che merita attenzione. Q6 calcola questo grado
+\emph{dentro una finestra temporale} e offre due criteri per decidere chi \`e
+hub:
 \begin{itemize}[nosep]
   \item \textbf{soglia assoluta} (parametro \texttt{minDegree}, il default):
-  tiene i conti con $\deg(v) \ge$ soglia. \`E il criterio \emph{operativo},
+  tiene i conti con grado maggiore o uguale alla soglia. \`E il criterio \emph{operativo},
   pi\`u vicino al caso d'uso antifrode/vigilanza dichiarato da LDBC FinBench: si
   vuole segnalare chi supera una certa attivit\`a indipendentemente dal resto
   del sistema;
@@ -190,17 +181,10 @@ ne isola poche decine).
 \subsection{Selettivit\`a e costo delle query}
 
 Per ragionare sui tempi di esecuzione useremo il concetto di
-\textbf{selettivit\`a} di una condizione, definito negli appunti (cap. 5,
-ottimizzazione delle query) come il rapporto fra la cardinalit\`a del risultato e
-quella dell'input:
-%
-\begin{equation}
-\text{sel}(P) \;=\; \frac{|\sigma_P(R)|}{|R|} \in [0,1]
-\label{eq:sel}
-\end{equation}
-%
-Un valore basso significa alta selettivit\`a (il filtro lascia passare poche
-tuple). Le nostre query di lookup sono molto selettive (filtrano su un singolo
+\textbf{selettivit\`a} di una condizione: la frazione dei dati in ingresso che
+supera il filtro. Un filtro molto selettivo lascia passare poche tuple, uno
+poco selettivo costringe il motore a toccare gran parte dei dati.
+Le nostre query di lookup sono molto selettive (filtrano su un singolo
 \texttt{id} indicizzato) e infatti costano pochi millisecondi; le analitiche a
 grafo come Q4 e Q6 sono poco selettive (devono esplorare molti archi) e questo
 si rifletter\`a nei tempi misurati (Sezione~\ref{sec:risultati}).
@@ -210,13 +194,13 @@ si rifletter\`a nei tempi misurati (Sezione~\ref{sec:risultati}).
 
 La traccia chiede di collegare il progetto, dove pertinente, ai concetti di
 sistema distribuito (replica, partizionamento/sharding, consistenza, batch e
-stream processing). \`E corretto premettere che il programma del corso, e i
-relativi appunti, trattano questi temi nel contesto del DBMS \emph{centralizzato}
-(propriet\`a ACID, controllo di concorrenza, recovery): la nozione di
-``consistenza'' degli appunti \`e quella transazionale ACID (cap. 6), non la
-consistenza distribuita. Per gli aspetti distribuiti veri e propri ci appoggiamo
-quindi alla documentazione ufficiale dei sistemi usati, collegandoli a come il
-prototipo \`e effettivamente configurato.
+stream processing). Va distinta la ``consistenza'' transazionale di un DBMS
+centralizzato (la C di ACID: ogni transazione porta la base di dati da uno stato
+valido a un altro) dalla consistenza di un sistema \emph{distribuito}, che
+riguarda invece quanto le copie di un dato su nodi diversi sono allineate fra
+loro. Per gli aspetti distribuiti ci appoggiamo alla documentazione ufficiale
+dei sistemi usati, collegandoli a come il prototipo \`e effettivamente
+configurato.
 
 \paragraph{Replica (MongoDB replica set).} Nel nostro
 \texttt{docker-compose.yml} MongoDB \`e avviato in modalit\`a \emph{replica set}
@@ -237,7 +221,7 @@ Con un solo nodo la lettura \`e di fatto fortemente consistente; in un set a pi\
 nodi si potrebbe scegliere fra letture pi\`u veloci ma potenzialmente
 indietro nel tempo (dai secondari) e letture pi\`u sicure (dal primario). \`E il
 tipico compromesso fra latenza e consistenza dei sistemi distribuiti, assente
-nel modello puramente centralizzato del corso.
+in un DBMS puramente centralizzato.
 
 \paragraph{Partizionamento/sharding.} Non lo abbiamo usato: alla scala del
 nostro dataset (\emph{scale factor} 1, descritto sotto) i dati stanno
@@ -462,8 +446,8 @@ LIMIT 50
 \end{lstlisting}
 
 \paragraph{Esempio di query cross-database (Q6).} Q6 fa lavorare i due motori in
-sequenza: prima Neo4j trova gli hub (i conti con grado alto, formula
-\ref{eq:degree}), poi MongoDB arricchisce ciascun hub con tipo di conto, data
+sequenza: prima Neo4j trova gli hub (i conti con grado alto), poi MongoDB
+arricchisce ciascun hub con tipo di conto, data
 di apertura e profilo dell'intestatario (persona o azienda). \`E il pattern
 ``il grafo trova \emph{chi}, il documento dice \emph{cosa}''.
 
@@ -582,7 +566,7 @@ conta quanto \`e selettivo il filtro a monte.
 
 \paragraph{Q6 --- Hub detection (analitica, cross-DB).} La query pi\`u pesante,
 circa 1,3~secondi. Deve scorrere \emph{tutti} i transfer dentro la finestra
-temporale, calcolare il grado di ogni conto (formula~\ref{eq:degree}) e tenere
+temporale, calcolare il grado di ogni conto e tenere
 solo quelli sopra soglia. \`E poco selettiva per costruzione --- guarda l'intera
 rete --- e per questo \`e la pi\`u costosa. La variante top-$x\%$ costa ancora
 un po' di pi\`u (circa 1,5~s a regime con $x=1$): non basta pi\`u tenere i
@@ -596,17 +580,17 @@ implementativo che ha contato: raggruppare per \emph{nodo} e leggere
 esecuzione \`e nettamente pi\`u lenta delle successive (per Q2 si passa da 64~ms
 a mezzo millisecondo). \`E l'effetto del \emph{caching}: alla prima esecuzione i
 dati non sono ancora nella memoria centrale dei database e vanno letti da disco;
-dopo, restano nel buffer e le query a regime sono molto pi\`u veloci. \`E la
-\emph{localit\`a temporale} descritta negli appunti (cap. 2, gestione del buffer):
+dopo, restano nel buffer e le query a regime sono molto pi\`u veloci. \`E il
+principio di \emph{localit\`a temporale} su cui si basa la gestione del buffer:
 un dato appena letto ha alta probabilit\`a di essere riletto a breve, quindi
 tenerlo in memoria ammortizza il costo.
 
 \paragraph{Lettura d'insieme.} Le quattro lookup/analitiche selettive (Q1, Q2,
 Q3, Q5) stanno tutte sotto i 10~ms; le due analitiche di grafo poco selettive
 (Q4, Q6) costano centinaia/migliaia di ms. La discriminante non \`e ``grafo
-contro documento'' n\'e ``lookup contro analitica'', ma la \textbf{selettivit\`a}
-(formula~\ref{eq:sel}): pi\`u dati la query \`e costretta a toccare, pi\`u tempo
-impiega. \`E esattamente la lezione del capitolo sull'ottimizzazione.
+contro documento'' n\'e ``lookup contro analitica'', ma la \textbf{selettivit\`a}:
+pi\`u dati la query \`e costretta a toccare, pi\`u tempo impiega. \`E il principio
+di base dell'ottimizzazione delle interrogazioni.
 
 % ===================================================================
 \section{Limitazioni}
@@ -637,7 +621,8 @@ impiega. \`E esattamente la lezione del capitolo sull'ottimizzazione.
 FinDetect mostra in pratica perch\'e la polyglot persistence \`e una scelta
 sensata su dati finanziari: le interrogazioni sui cammini (cicli, hub) vivono
 naturalmente nel grafo, le schede aggregate nel documento, e ogni motore lavora
-dove rende di pi\`u. L'analisi dei tempi conferma la teoria del corso: il costo
+dove rende di pi\`u. L'analisi dei tempi conferma quanto anticipato nella
+Sezione~2: il costo
 di una query \`e governato dalla sua selettivit\`a, non dal tipo di database. Le
 sei query coprono e superano il requisito della traccia (lookup e analitiche,
 con casi cross-database), e l'interfaccia rende il tutto dimostrabile senza
